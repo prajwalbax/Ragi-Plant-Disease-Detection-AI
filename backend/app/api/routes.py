@@ -6,6 +6,9 @@ from fastapi import (
     status,
 )
 
+import logging
+import traceback
+
 from app.schemas.prediction import (
     HealthResponse,
     PredictionResponse,
@@ -19,6 +22,10 @@ from app.services.model_service import (
 
 from app.services.llm_service import (
     get_disease_advisory,
+)
+
+logger = logging.getLogger(
+    "ragi-api.routes"
 )
 
 router = APIRouter()
@@ -45,9 +52,12 @@ def health():
 
 
 @router.post(
+
     "/predict",
+
     response_model=
     PredictionResponse
+
 )
 async def predict(
 
@@ -124,6 +134,22 @@ async def predict(
 
         )
 
+        logger.info(
+
+            "Prediction success "
+
+            "disease=%s "
+
+            "confidence=%.4f",
+
+            prediction
+            .disease_class,
+
+            prediction
+            .confidence
+
+        )
+
         advisory = (
 
             get_disease_advisory(
@@ -148,6 +174,14 @@ async def predict(
 
     ) as exc:
 
+        logger.exception(
+
+            "Model load failure: %s",
+
+            str(exc)
+
+        )
+
         raise HTTPException(
 
             status_code=
@@ -165,6 +199,14 @@ async def predict(
 
     ) as exc:
 
+        logger.exception(
+
+            "Prediction failure: %s",
+
+            str(exc)
+
+        )
+
         raise HTTPException(
 
             status_code=
@@ -178,6 +220,14 @@ async def predict(
 
     except Exception as exc:
 
+        logger.exception(
+
+            "Unhandled backend failure"
+
+        )
+
+        traceback.print_exc()
+
         raise HTTPException(
 
             status_code=
@@ -185,12 +235,8 @@ async def predict(
             status
             .HTTP_500_INTERNAL_SERVER_ERROR,
 
-            detail=(
+            detail=
 
-                "Prediction failed. "
-
-                "Check backend logs."
-
-            )
+            str(exc)
 
         ) from exc

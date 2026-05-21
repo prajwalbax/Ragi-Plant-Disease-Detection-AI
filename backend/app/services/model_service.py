@@ -256,13 +256,13 @@ class ModelService:
 
             logger.exception(
 
-                "Inference failed"
+                f"Inference failed: {str(exc)}"
 
             )
 
             raise PredictionError(
 
-                "Prediction failed"
+                f"Prediction failed: {str(exc)}"
 
             ) from exc
 
