@@ -146,18 +146,30 @@ class ModelService:
 
             )
 
+            with open(
+
+                settings
+                .resolved_model_dir,
+
+                "rb"
+
+            ) as file:
+
+                model_bytes = (
+
+                    file.read()
+
+                )
+
             self._interpreter = (
 
                 tflite.Interpreter(
 
-                    model_path=
+                    model_content=
 
-                    str(
+                    model_bytes,
 
-                        settings
-                        .resolved_model_dir
-
-                    )
+                    num_threads=1
 
                 )
 
