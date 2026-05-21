@@ -76,38 +76,17 @@ app.include_router(
 )
 
 
-@app.on_event(
-    "startup"
-)
+@app.on_event("startup")
 def startup():
 
     logger.info(
-
-        "Starting %s",
-
-        settings.app_name
-
+        "Starting API"
     )
 
     model_service.validate_assets()
 
-    if (
-
-        settings
-        .load_model_on_startup
-
-    ):
-
-        model_service.load()
-
-        logger.info(
-            "Model loaded"
-        )
-
     logger.info(
-
         "Startup complete"
-
     )
 
 
