@@ -1,0 +1,10 @@
+ragienv/
+__pycache__/
+*.pyc
+.env
+.venv/
+node_modules/
+.next/
+dist/
+*.log
+frontend/.env.local
