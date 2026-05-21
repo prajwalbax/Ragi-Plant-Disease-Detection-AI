@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import Lock
 
 import numpy as np
-import tensorflow as tf
+import tflite_runtime.interpreter as tflite
 
 from PIL import (
     Image,
@@ -50,14 +50,12 @@ DISEASE_DESCRIPTIONS = {
 class ModelNotReadyError(
     RuntimeError
 ):
-
     pass
 
 
 class PredictionError(
     RuntimeError
 ):
-
     pass
 
 
@@ -65,7 +63,11 @@ class ModelService:
 
     def __init__(self):
 
-        self._model = None
+        self._interpreter = None
+
+        self._input_details = None
+
+        self._output_details = None
 
         self._classes = []
 
@@ -77,7 +79,7 @@ class ModelService:
 
         return (
 
-            self._model
+            self._interpreter
             is not None
 
             and
@@ -93,9 +95,11 @@ class ModelService:
         self
     ):
 
-        model_dir = (
+        model_file = (
+
             settings
             .resolved_model_dir
+
         )
 
         class_file = (
@@ -105,25 +109,13 @@ class ModelService:
 
         )
 
-        if not model_dir.exists():
+        if not model_file.exists():
 
             raise ModelNotReadyError(
 
-                f"Missing model: "
-                f"{model_dir}"
+                f"Model missing: "
 
-            )
-
-        if not (
-
-            model_dir /
-            "saved_model.pb"
-
-        ).exists():
-
-            raise ModelNotReadyError(
-
-                "SavedModel missing"
+                f"{model_file}"
 
             )
 
@@ -131,7 +123,9 @@ class ModelService:
 
             raise ModelNotReadyError(
 
-                "class_indices.json missing"
+                f"Missing class file: "
+
+                f"{class_file}"
 
             )
 
@@ -147,23 +141,43 @@ class ModelService:
             self.validate_assets()
 
             logger.info(
-                "Loading TensorFlow model..."
+
+                "Loading TFLite model..."
+
             )
 
-            self._model = (
+            self._interpreter = (
 
-                tf.keras.layers
-                .TFSMLayer(
+                tflite.Interpreter(
+
+                    model_path=
 
                     str(
+
                         settings
                         .resolved_model_dir
-                    ),
 
-                    call_endpoint=
-                    "serving_default"
+                    )
 
                 )
+
+            )
+
+            self._interpreter.allocate_tensors()
+
+            self._input_details = (
+
+                self
+                ._interpreter
+                .get_input_details()
+
+            )
+
+            self._output_details = (
+
+                self
+                ._interpreter
+                .get_output_details()
 
             )
 
@@ -179,14 +193,20 @@ class ModelService:
             )
 
             logger.info(
-                "Model ready"
+
+                "TFLite model ready"
+
             )
 
 
     def predict(
+
         self,
+
         contents: bytes,
+
         filename: str
+
     ):
 
         if not self.is_loaded:
@@ -206,26 +226,38 @@ class ModelService:
 
         try:
 
-            outputs = (
+            self._interpreter.set_tensor(
 
-                self._model(
-                    image
+                self
+                ._input_details[0]["index"],
+
+                image.astype(
+                    np.float32
                 )
 
             )
 
+            self._interpreter.invoke()
+
             preds = (
 
-                list(
-                    outputs.values()
-                )[0]
-                .numpy()
+                self
+                ._interpreter
+                .get_tensor(
+
+                    self
+                    ._output_details[0]["index"]
+
+                )
+
             )
 
         except Exception as exc:
 
             logger.exception(
+
                 "Inference failed"
+
             )
 
             raise PredictionError(
@@ -237,23 +269,10 @@ class ModelService:
         duration = (
 
             time.perf_counter()
+
             - start
+
         )
-
-        if (
-
-            duration >
-
-            settings
-            .prediction_timeout_seconds
-
-        ):
-
-            raise PredictionError(
-
-                "Prediction timeout"
-
-            )
 
         idx = int(
 
@@ -322,11 +341,11 @@ class ModelService:
 
             advisory={
 
-                "english_explanation": [],
+                "english_explanation":[],
 
-                "kannada_explanation": [],
+                "kannada_explanation":[],
 
-                "recommendation": {
+                "recommendation":{
 
                     "chemical_name":"",
 
@@ -342,16 +361,18 @@ class ModelService:
 
 
     def _load_classes(
+
         self,
+
         path: Path
+
     ):
 
         with path.open(
 
             "r",
 
-            encoding=
-            "utf-8"
+            encoding="utf-8"
 
         ) as file:
 
@@ -359,7 +380,7 @@ class ModelService:
                 file
             )
 
-        classes = [
+        return [
 
             name
 
@@ -377,12 +398,11 @@ class ModelService:
 
         ]
 
-        return classes
-
 
     def _preprocess_image(
 
         self,
+
         contents: bytes
 
     ):
