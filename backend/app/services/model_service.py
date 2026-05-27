@@ -73,6 +73,14 @@ class ModelService:
 
         self._lock = Lock()
 
+        self._model_path = (
+
+            settings
+            .resolved_model_dir
+            / "model.tflite"
+
+        )
+
 
     @property
     def is_loaded(self):
@@ -97,8 +105,7 @@ class ModelService:
 
         model_file = (
 
-            settings
-            .resolved_model_dir
+            self._model_path
 
         )
 
@@ -148,8 +155,7 @@ class ModelService:
 
             with open(
 
-                settings
-                .resolved_model_dir,
+                self._model_path,
 
                 "rb"
 
@@ -166,7 +172,6 @@ class ModelService:
                 tf.lite.Interpreter(
 
                     model_content=
-
                     model_bytes,
 
                     num_threads=1
@@ -314,13 +319,17 @@ class ModelService:
 
             "disease=%s "
 
-            "confidence=%.4f",
+            "confidence=%.4f "
+
+            "duration=%.4fs",
 
             filename,
 
             disease,
 
-            confidence
+            confidence,
+
+            duration
 
         )
 
