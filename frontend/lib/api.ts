@@ -152,19 +152,7 @@ export async function predictDisease(
 
       "/predict",
 
-      formData,
-
-      {
-
-        headers: {
-
-          "Content-Type":
-
-          "multipart/form-data"
-
-        }
-
-      }
+      formData
 
     );
 
@@ -190,19 +178,21 @@ export async function predictDisease(
       ?.data
       ?.detail;
 
+      const message =
+
+      typeof detail === "string"
+
+      ?
+
+      detail
+
+      :
+
+      error.message;
+
       throw new Error(
 
-        typeof detail ===
-
-        "string"
-
-        ?
-
-        detail
-
-        :
-
-        "Prediction failed."
+        message || "Prediction failed."
 
       );
 
