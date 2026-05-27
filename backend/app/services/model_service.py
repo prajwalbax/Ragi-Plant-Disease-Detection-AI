@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import Lock
 
 import numpy as np
-import tflite_runtime.interpreter as tflite
+import tensorflow as tf
 
 from PIL import (
     Image,
@@ -163,7 +163,7 @@ class ModelService:
 
             self._interpreter = (
 
-                tflite.Interpreter(
+                tf.lite.Interpreter(
 
                     model_content=
 
