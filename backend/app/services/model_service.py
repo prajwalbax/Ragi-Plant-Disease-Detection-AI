@@ -2,491 +2,151 @@ import io
 import json
 import logging
 import time
-
 from pathlib import Path
 from threading import Lock
 
 import numpy as np
 import tensorflow as tf
-
-from PIL import (
-    Image,
-    UnidentifiedImageError
-)
+from PIL import Image, UnidentifiedImageError
 
 from app.core.config import settings
+from app.schemas.prediction import PredictionResponse
 
-from app.schemas.prediction import (
-    PredictionResponse
-)
-
-logger = logging.getLogger(
-    "ragi-api.model"
-)
+logger = logging.getLogger("ragi-api.model")
 
 
 DISEASE_DESCRIPTIONS = {
-
-    "downy":
-    "Downy mildew symptoms detected.",
-
-    "healthy":
-    "Leaf appears healthy.",
-
-    "mottle":
-    "Mottle symptoms detected.",
-
-    "seedling":
-    "Seedling disease symptoms detected.",
-
-    "smut":
-    "Smut symptoms detected.",
-
-    "wilt":
-    "Wilt symptoms detected."
+    "downy": "Downy mildew symptoms detected.",
+    "healthy": "Leaf appears healthy.",
+    "mottle": "Mottle symptoms detected.",
+    "seedling": "Seedling disease symptoms detected.",
+    "smut": "Smut symptoms detected.",
+    "wilt": "Wilt symptoms detected.",
 }
 
 
-class ModelNotReadyError(
-    RuntimeError
-):
+class ModelNotReadyError(RuntimeError):
     pass
 
 
-class PredictionError(
-    RuntimeError
-):
+class PredictionError(RuntimeError):
     pass
 
 
 class ModelService:
-
     def __init__(self):
-
         self._interpreter = None
-
         self._input_details = None
-
         self._output_details = None
-
         self._classes = []
-
         self._lock = Lock()
-
-        self._model_path = (
-
-            settings
-            .resolved_model_dir
-            / "model.tflite"
-
-        )
-
+        self._model_path = settings.resolved_model_dir / "model.tflite"
 
     @property
     def is_loaded(self):
+        return self._interpreter is not None and bool(self._classes)
 
-        return (
+    def validate_assets(self):
+        if not self._model_path.exists():
+            raise ModelNotReadyError(f"Model missing: {self._model_path}")
 
-            self._interpreter
-            is not None
-
-            and
-
-            bool(
-                self._classes
-            )
-
-        )
-
-
-    def validate_assets(
-        self
-    ):
-
-        model_file = (
-
-            self._model_path
-
-        )
-
-        class_file = (
-
-            settings
-            .resolved_class_indices_path
-
-        )
-
-        if not model_file.exists():
-
-            raise ModelNotReadyError(
-
-                f"Model missing: "
-
-                f"{model_file}"
-
-            )
-
+        class_file = settings.resolved_class_indices_path
         if not class_file.exists():
-
-            raise ModelNotReadyError(
-
-                f"Missing class file: "
-
-                f"{class_file}"
-
-            )
-
+            raise ModelNotReadyError(f"Missing class file: {class_file}")
 
     def load(self):
-
         with self._lock:
-
             if self.is_loaded:
-
                 return
 
             self.validate_assets()
+            logger.info("Loading TFLite model from %s", self._model_path)
 
-            logger.info(
+            with self._model_path.open("rb") as file:
+                model_bytes = file.read()
 
-                "Loading TFLite model..."
-
+            self._interpreter = tf.lite.Interpreter(
+                model_content=model_bytes,
+                num_threads=1,
             )
-
-            with open(
-
-                self._model_path,
-
-                "rb"
-
-            ) as file:
-
-                model_bytes = (
-
-                    file.read()
-
-                )
-
-            self._interpreter = (
-
-                tf.lite.Interpreter(
-
-                    model_content=
-                    model_bytes,
-
-                    num_threads=1
-
-                )
-
-            )
-
             self._interpreter.allocate_tensors()
+            self._input_details = self._interpreter.get_input_details()
+            self._output_details = self._interpreter.get_output_details()
+            self._classes = self._load_classes(settings.resolved_class_indices_path)
 
-            self._input_details = (
+            logger.info("TFLite model ready")
 
-                self
-                ._interpreter
-                .get_input_details()
-
-            )
-
-            self._output_details = (
-
-                self
-                ._interpreter
-                .get_output_details()
-
-            )
-
-            self._classes = (
-
-                self._load_classes(
-
-                    settings
-                    .resolved_class_indices_path
-
-                )
-
-            )
-
-            logger.info(
-
-                "TFLite model ready"
-
-            )
-
-
-    def predict(
-
-        self,
-
-        contents: bytes,
-
-        filename: str
-
-    ):
-
+    def predict(self, contents: bytes, filename: str):
         if not self.is_loaded:
-
             self.load()
 
-        image = (
-
-            self
-            ._preprocess_image(
-                contents
-            )
-
-        )
-
+        image = self._preprocess_image(contents)
         start = time.perf_counter()
 
         try:
-
             self._interpreter.set_tensor(
-
-                self
-                ._input_details[0]["index"],
-
-                image.astype(
-                    np.float32
-                )
-
+                self._input_details[0]["index"],
+                image.astype(np.float32),
             )
-
             self._interpreter.invoke()
-
-            preds = (
-
-                self
-                ._interpreter
-                .get_tensor(
-
-                    self
-                    ._output_details[0]["index"]
-
-                )
-
+            preds = self._interpreter.get_tensor(
+                self._output_details[0]["index"]
             )
-
         except Exception as exc:
+            logger.exception("Inference failed: %s", str(exc))
+            raise PredictionError(f"Prediction failed: {str(exc)}") from exc
 
-            logger.exception(
-
-                f"Inference failed: {str(exc)}"
-
-            )
-
-            raise PredictionError(
-
-                f"Prediction failed: {str(exc)}"
-
-            ) from exc
-
-        duration = (
-
-            time.perf_counter()
-
-            - start
-
-        )
-
-        idx = int(
-
-            np.argmax(
-                preds[0]
-            )
-
-        )
-
-        confidence = float(
-
-            preds[0][idx]
-
-        )
-
-        disease = (
-
-            self._classes[idx]
-
-        )
+        duration = time.perf_counter() - start
+        idx = int(np.argmax(preds[0]))
+        confidence = float(preds[0][idx])
+        disease = self._classes[idx]
 
         logger.info(
-
-            "Prediction "
-
-            "file=%s "
-
-            "disease=%s "
-
-            "confidence=%.4f "
-
-            "duration=%.4fs",
-
+            "Prediction file=%s disease=%s confidence=%.4f duration=%.4fs",
             filename,
-
             disease,
-
             confidence,
-
-            duration
-
+            duration,
         )
 
         return PredictionResponse(
-
-            disease_class=
-            disease,
-
-            confidence=
-            confidence,
-
-            confidence_percent=
-            round(
-                confidence * 100,
-                2
-            ),
-
-            description=
-
-            DISEASE_DESCRIPTIONS.get(
-
-                disease,
-
-                "Disease detected."
-
-            ),
-
-            filename=
-            filename,
-
+            disease_class=disease,
+            confidence=confidence,
+            confidence_percent=round(confidence * 100, 2),
+            description=DISEASE_DESCRIPTIONS.get(disease, "Disease detected."),
+            filename=filename,
             advisory={
-
-                "english_explanation":[],
-
-                "kannada_explanation":[],
-
-                "recommendation":{
-
-                    "chemical_name":"",
-
-                    "dosage":"",
-
-                    "application_method":""
-
-                }
-
-            }
-
+                "english_explanation": [],
+                "kannada_explanation": [],
+                "recommendation": {
+                    "chemical_name": "",
+                    "dosage": "",
+                    "application_method": "",
+                },
+            },
         )
 
-
-    def _load_classes(
-
-        self,
-
-        path: Path
-
-    ):
-
-        with path.open(
-
-            "r",
-
-            encoding="utf-8"
-
-        ) as file:
-
-            raw = json.load(
-                file
-            )
+    def _load_classes(self, path: Path):
+        with path.open("r", encoding="utf-8") as file:
+            raw = json.load(file)
 
         return [
-
             name
-
-            for _, name
-
-            in sorted(
-
+            for _, name in sorted(
                 raw.items(),
-
-                key=lambda x:
-
-                int(x[0])
-
+                key=lambda item: int(item[0]),
             )
-
         ]
 
-
-    def _preprocess_image(
-
-        self,
-
-        contents: bytes
-
-    ):
-
+    def _preprocess_image(self, contents: bytes):
         try:
+            image = Image.open(io.BytesIO(contents)).convert("RGB")
+        except UnidentifiedImageError as exc:
+            raise PredictionError("Invalid image") from exc
 
-            image = Image.open(
-
-                io.BytesIO(
-                    contents
-                )
-
-            ).convert(
-
-                "RGB"
-
-            )
-
-        except (
-
-            UnidentifiedImageError
-
-        ):
-
-            raise PredictionError(
-
-                "Invalid image"
-
-            )
-
-        image = image.resize(
-
-            (
-
-                settings.image_size,
-
-                settings.image_size
-
-            )
-
-        )
-
-        array = (
-
-            np.asarray(
-
-                image,
-
-                dtype=np.float32
-
-            )
-
-            / 255.0
-
-        )
-
-        return np.expand_dims(
-
-            array,
-
-            axis=0
-
-        )
+        image = image.resize((settings.image_size, settings.image_size))
+        array = np.asarray(image, dtype=np.float32) / 255.0
+        return np.expand_dims(array, axis=0)
 
 
 model_service = ModelService()

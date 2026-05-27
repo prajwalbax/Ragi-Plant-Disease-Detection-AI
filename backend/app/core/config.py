@@ -28,12 +28,12 @@ class Settings(BaseSettings):
     load_model_on_startup: bool = True
 
     model_dir: Path = Field(
-    default=Path("model.tflite")
-)
+        default=Path("my_model")
+    )
 
     class_indices_path: Path = Field(
         default=Path(
-            "../class_indices.json"
+            "class_indices.json"
         )
     )
 
